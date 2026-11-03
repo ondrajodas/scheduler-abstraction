@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Provoz a testy · Scheduler &amp; Mutex</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); color-scheme: light; }
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; -webkit-text-size-adjust: 100%; }
+[hidden] { display: none !important; }
+
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --fg: #1b2230; --muted: #5a6476; --line: #dde1e8;
+  --accent: #1f5fa8; --accent-soft: #e6eef8; --code-bg: #eef1f5; --ok: #1d7a4a; --warn: #a35b00;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161d; --surface: #1a2029; --fg: #e3e7ee; --muted: #9aa4b5; --line: #2c3442;
+    --accent: #6fa8ec; --accent-soft: #1d2a3b; --code-bg: #1f2632; --ok: #5cc28d; --warn: #e3a04f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a2029; --fg: #e3e7ee; --muted: #9aa4b5; --line: #2c3442;
+  --accent: #6fa8ec; --accent-soft: #1d2a3b; --code-bg: #1f2632; --ok: #5cc28d; --warn: #e3a04f;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.6; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 32px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 8px; }
+header { display: flex; flex-direction: column; gap: 10px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 42px); }
+h2 { font-size: 26px; margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--line); }
+header + h2 { border-top: 0; margin-top: 16px; padding-top: 0; }
+h3 { font-size: 19px; margin-top: 22px; }
+p, ul, ol { margin: 8px 0; max-width: 72ch; }
+li { margin: 4px 0; }
+.lead { font-size: 18px; color: var(--muted); margin: 0; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-mono); font-size: .88em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { font-family: var(--font-mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 14px 16px; overflow-x: auto; margin: 10px 0; }
+pre code { background: none; padding: 0; font-size: inherit; }
+pre.mermaid { background: var(--surface); text-align: center; }
+.c { color: var(--muted); }
+.k { color: var(--accent); font-weight: 600; }
+.scroll { overflow-x: auto; margin: 10px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--code-bg); }
+th code { font-size: 1em; }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+.callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 12px 0; max-width: 72ch; }
+.pill { display: inline-block; font-family: var(--font-mono); font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); }
+.topnav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+.topnav-inner { max-width: 880px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.brand { font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--fg); text-decoration: none; margin-right: auto; }
+.topnav a.tab { font-size: 14px; color: var(--muted); text-decoration: none; padding: 4px 0; border-bottom: 2px solid transparent; }
+.topnav a.tab:hover { color: var(--fg); }
+.topnav a.tab[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.onpage { font-size: 14px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.onpage a { color: var(--muted); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 4px 0 0; }
+.cards a { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); text-decoration: none; color: var(--fg); min-width: 0; }
+.cards a:hover { border-color: var(--accent); }
+.cards strong { font-family: var(--font-display); font-size: 18px; color: var(--accent); }
+.cards span { font-size: 14px; color: var(--muted); }
+.pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.pager a { display: flex; flex-direction: column; text-decoration: none; padding: 10px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); min-width: 0; }
+.pager a span { font-size: 12px; color: var(--muted); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .06em; }
+.pager a.next { margin-left: auto; text-align: right; }
+</style>
+</head>
+<body>
+<nav class="topnav" aria-label="Stránky návrhu"><div class="topnav-inner"><a class="brand" href="index.html">Scheduler &amp; Mutex</a><a class="tab" href="index.html">Přehled</a><a class="tab" href="rozhrani.html">Rozhraní</a><a class="tab" href="implementace.html">Implementace</a><a class="tab" href="provoz.html" aria-current="page">Provoz</a></div></nav>
+<main class="wrap">
+<header><span class="eyebrow">Scheduler &amp; Mutex · Provoz</span><h1>Provoz a testy</h1><p class="lead">Přidání crunz, nasazení, ověřené testy a vědomá omezení.</p><div class="onpage"><span>Na stránce:</span><a href="#crunz">Přidání crunz</a><a href="#nasazeni">Nasazení</a><a href="#testy">Testování</a><a href="#limity">Vědomá omezení</a></div></header>
+<h2 id="crunz">Přidání crunz</h2>
+<ol>
+  <li>Implementovat <code>CrunzScheduler implements SchedulerInterface</code>. Bez crunz <code>preventOverlapping()</code>, protože zamykání zajistí <code>LockingScheduler</code>.</li>
+  <li>Přidat <code>DRIVER_CRUNZ</code> do <code>match</code> v <code>SchedulerFactory::create()</code>. Factory už dostává <code>ClockInterface</code> pro implementace, které vyhodnocují cron pro zadaný čas.</li>
+  <li>Přidat <code>CrunzSchedulerTest extends SchedulerTestCase</code> s metodami <code>createScheduler()</code> a <code>setNow()</code>. Musí projít stejnými případy jako Laravel, takže se oba budou chovat stejně.</li>
+  <li>Přepnout jméno driveru v konfiguraci. Joby, crontab ani mutex se nemění.</li>
+</ol>
+
+<h2 id="nasazeni">Nasazení</h2>
+<ul>
+  <li><strong>Crontab:</strong> <code>* * * * * php /app/bin/scheduler-run</code>.</li>
+  <li><strong>Scheduler na jedné instanci.</strong> Zámek brání překryvu běhů napříč servery, ale krátký job by se na dvou instancích mohl v jedné minutě spustit dvakrát.</li>
+  <li><strong>Redis:</strong> potřeba <code>ext-redis</code>. Instance nebo databáze bez eviction <code>allkeys-lru</code>, jinak může Redis zámek tiše vyhodit.</li>
+  <li><strong>Závislosti:</strong> <code>illuminate/console</code> přinese i <code>illuminate/support</code>, <code>collections</code>, <code>view</code>, <code>laravel/prompts</code> a <code>symfony/console</code>. V kódu aplikace se neobjeví, ale budou ve <code>vendor/</code>.</li>
+</ul>
+
+<h2 id="testy">Testování</h2>
+<div class="callout"><strong>Ověřeno v Dockeru</strong> (PHP 8.4, <code>illuminate/console</code> 12, Redis 7): <code>composer ci</code> prošel včetně phpcs (PSR-12), PHPStan (úroveň max) a PHPUnit 45/45 testů.</div>
+<div class="scroll"><table>
+  <thead><tr><th>Test</th><th>Co ověřuje</th></tr></thead>
+  <tbody>
+    <tr><td><code>SchedulerTestCase</code></td><td>Společné testy pro každou implementaci schedulerů (Laravel, budoucí crunz): kdy je job na řadě (každou minutu, <code>*/15</code>, denně, <code>@hourly</code>, pracovní dny), timezone jobu, selhání jednoho jobu nezastaví ostatní, dlouhý job nezpůsobí, že další přijde o svou minutu, nevalidní i nemožný cron, duplicitní jméno</td></tr>
+    <tr><td><code>LaravelSchedulerTest</code></td><td>Projde <code>SchedulerTestCase</code> s časem přes <code>Carbon::setTestNow()</code>; navíc ověřuje, že se Laravel mutex nikdy nezavolá a že selhání jobu se zaloguje</td></tr>
+    <tr><td><code>LockingSchedulerTest</code></td><td>Přeskočení při drženém zámku, uvolnění po běhu i po výjimce, nový běh po vypršení TTL, <code>withoutOverlapping: false</code></td></tr>
+    <tr><td><code>MutexTestCase</code></td><td>Společné testy, které musí splnit každá implementace (<code>InMemoryMutex</code> i <code>RedisMutex</code> proti skutečnému Redisu): atomicita, TTL, cizí token nic nesmaže, vypršelý vlastník nesmaže nový zámek, idempotentní release</td></tr>
+    <tr><td><code>RedisMutexTest</code></td><td>Prefix klíče, výpadek backendu skončí <code>MutexException</code></td></tr>
+    <tr><td><code>SchedulerFactoryTest</code>, <code>ScheduledJobTest</code></td><td>Výběr driveru, neznámý driver, validace jména a TTL</td></tr>
+  </tbody>
+</table></div>
+<pre><code>docker compose run --rm app composer ci   <span class="c"># phpcs + phpstan + phpunit</span></code></pre>
+
+<h2 id="limity">Vědomá omezení</h2>
+<p>Návrh je záměrně malý. Většina omezení jde doplnit bez změny rozhraní, jedna výjimka je vyznačená.</p>
+<div class="scroll"><table>
+  <thead><tr><th>Omezení</th><th>Možné rozšíření</th><th>Mění rozhraní?</th></tr></thead>
+  <tbody>
+    <tr><td>Joby běží za sebou v jednom procesu</td><td>Dlouhou práci posílat do fronty; paralelní běh uvnitř adaptéru</td><td>ne</td></tr>
+    <tr><td>Bez deduplikace jedné minuty napříč instancemi</td><td>Nepovinný parametr <code>onOneServer</code> v <code>ScheduledJob</code> + zámek na klíč <code>{name}:{YmdHi}</code></td><td>ne</td></tr>
+    <tr><td>Dlouhý job potřebuje velké <code>lockTtlSeconds</code></td><td><code>MutexInterface::extend()</code> pro průběžné prodlužování zámku</td><td><strong>ano</strong>: nová metoda rozbije existující implementace, rozhodnout dřív, než jich bude víc</td></tr>
+    <tr><td>Zmeškaná minuta se nedohání</td><td>Ukládat čas posledního běhu a dohnat</td><td>ne</td></tr>
+    <tr><td>Jen Redis backend</td><td><code>PdoMutex</code>, který projde stejnými testy z <code>MutexTestCase</code></td><td>ne</td></tr>
+  </tbody>
+</table></div>
+<div class="pager"><a href="implementace.html"><span>← Předchozí</span>Implementace</a></div>
+</main>
+</body>
+</html>

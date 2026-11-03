@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Rozhraní · Scheduler &amp; Mutex</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); color-scheme: light; }
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; -webkit-text-size-adjust: 100%; }
+[hidden] { display: none !important; }
+
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --fg: #1b2230; --muted: #5a6476; --line: #dde1e8;
+  --accent: #1f5fa8; --accent-soft: #e6eef8; --code-bg: #eef1f5; --ok: #1d7a4a; --warn: #a35b00;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161d; --surface: #1a2029; --fg: #e3e7ee; --muted: #9aa4b5; --line: #2c3442;
+    --accent: #6fa8ec; --accent-soft: #1d2a3b; --code-bg: #1f2632; --ok: #5cc28d; --warn: #e3a04f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a2029; --fg: #e3e7ee; --muted: #9aa4b5; --line: #2c3442;
+  --accent: #6fa8ec; --accent-soft: #1d2a3b; --code-bg: #1f2632; --ok: #5cc28d; --warn: #e3a04f;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.6; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 32px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 8px; }
+header { display: flex; flex-direction: column; gap: 10px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 42px); }
+h2 { font-size: 26px; margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--line); }
+header + h2 { border-top: 0; margin-top: 16px; padding-top: 0; }
+h3 { font-size: 19px; margin-top: 22px; }
+p, ul, ol { margin: 8px 0; max-width: 72ch; }
+li { margin: 4px 0; }
+.lead { font-size: 18px; color: var(--muted); margin: 0; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-mono); font-size: .88em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { font-family: var(--font-mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 14px 16px; overflow-x: auto; margin: 10px 0; }
+pre code { background: none; padding: 0; font-size: inherit; }
+pre.mermaid { background: var(--surface); text-align: center; }
+.c { color: var(--muted); }
+.k { color: var(--accent); font-weight: 600; }
+.scroll { overflow-x: auto; margin: 10px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--code-bg); }
+th code { font-size: 1em; }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+.callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 12px 0; max-width: 72ch; }
+.pill { display: inline-block; font-family: var(--font-mono); font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); }
+.topnav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+.topnav-inner { max-width: 880px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.brand { font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--fg); text-decoration: none; margin-right: auto; }
+.topnav a.tab { font-size: 14px; color: var(--muted); text-decoration: none; padding: 4px 0; border-bottom: 2px solid transparent; }
+.topnav a.tab:hover { color: var(--fg); }
+.topnav a.tab[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.onpage { font-size: 14px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.onpage a { color: var(--muted); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 4px 0 0; }
+.cards a { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); text-decoration: none; color: var(--fg); min-width: 0; }
+.cards a:hover { border-color: var(--accent); }
+.cards strong { font-family: var(--font-display); font-size: 18px; color: var(--accent); }
+.cards span { font-size: 14px; color: var(--muted); }
+.pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.pager a { display: flex; flex-direction: column; text-decoration: none; padding: 10px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); min-width: 0; }
+.pager a span { font-size: 12px; color: var(--muted); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .06em; }
+.pager a.next { margin-left: auto; text-align: right; }
+</style>
+</head>
+<body>
+<nav class="topnav" aria-label="Stránky návrhu"><div class="topnav-inner"><a class="brand" href="index.html">Scheduler &amp; Mutex</a><a class="tab" href="index.html">Přehled</a><a class="tab" href="rozhrani.html" aria-current="page">Rozhraní</a><a class="tab" href="implementace.html">Implementace</a><a class="tab" href="provoz.html">Provoz</a></div></nav>
+<main class="wrap">
+<header><span class="eyebrow">Scheduler &amp; Mutex · Rozhraní</span><h1>Rozhraní</h1><p class="lead">SchedulerInterface, JobInterface, ScheduledJob a MutexInterface: parametry, typy a záruky.</p><div class="onpage"><span>Na stránce:</span><a href="#scheduler">Scheduler</a><a href="#mutex">Mutex</a><a href="#pouziti">Použití</a></div></header>
+<h2 id="scheduler">Scheduler</h2>
+<pre><code><span class="k">interface</span> SchedulerInterface
+{
+    <span class="c">/** @throws InvalidArgumentException nevalidní cron výraz nebo duplicitní jméno */</span>
+    <span class="k">public function</span> add(ScheduledJob $job): void;
+
+    <span class="c">/** Spustí joby, které jsou na řadě v aktuální minutě. Volá systémový cron každou minutu. */</span>
+    <span class="k">public function</span> runDue(): void;
+}
+
+<span class="k">interface</span> JobInterface
+{
+    <span class="c">/** Výjimka = běh selhal; ostatní joby na řadě poběží dál. */</span>
+    <span class="k">public function</span> run(): void;
+}</code></pre>
+
+<h3>ScheduledJob</h3>
+<pre><code><span class="k">final readonly class</span> ScheduledJob
+{
+    <span class="k">public function</span> __construct(
+        <span class="k">public</span> string $name,
+        <span class="k">public</span> string $cron,
+        <span class="k">public</span> JobInterface $job,
+        <span class="k">public</span> bool $withoutOverlapping = <span class="k">true</span>,
+        <span class="k">public</span> int $lockTtlSeconds = 3600,
+        <span class="k">public</span> ?DateTimeZone $timezone = <span class="k">null</span>,
+    ) {}
+
+    <span class="k">public function</span> withJob(JobInterface $job): self;
+}</code></pre>
+<div class="scroll"><table>
+  <thead><tr><th>Parametr</th><th>Typ</th><th>Výchozí</th><th>Význam</th></tr></thead>
+  <tbody>
+    <tr><td><code>name</code></td><td><code>string</code></td><td>povinný</td><td>Unikátní jméno <code>/^[a-z0-9][a-z0-9._-]{0,127}$/</code>. Je součástí klíče zámku, mezi deployi ho neměnit.</td></tr>
+    <tr><td><code>cron</code></td><td><code>string</code></td><td>povinný</td><td>Crontab zápis: <code>*/15 * * * *</code>, <code>0 3 * * 1-5</code>, <code>@daily</code>. Validuje ho adaptér při <code>add()</code>.</td></tr>
+    <tr><td><code>job</code></td><td><code>JobInterface</code></td><td>povinný</td><td>Co se má spustit.</td></tr>
+    <tr><td><code>withoutOverlapping</code></td><td><code>bool</code></td><td><code>true</code></td><td>Přeskočit běh, dokud předchozí běh drží zámek. Bezpečnější výchozí hodnota než v Laravelu.</td></tr>
+    <tr><td><code>lockTtlSeconds</code></td><td><code>int</code> (&gt; 0)</td><td><code>3600</code></td><td>Za jak dlouho zámek vyprší, když proces spadne bez uvolnění. Musí být delší než nejdelší běh jobu.</td></tr>
+    <tr><td><code>timezone</code></td><td><code>?DateTimeZone</code></td><td><code>null</code></td><td>Zóna, ve které se cron vyhodnocuje (<code>null</code> = výchozí zóna PHP).</td></tr>
+  </tbody>
+</table></div>
+
+<h2 id="mutex">Mutex</h2>
+<pre><code><span class="c">/**
+ * Každá implementace musí zaručit:
+ *  - acquire je atomický napříč procesy a servery se sdíleným backendem
+ *  - každý zámek po TTL vyprší (žádné mrtvé zámky po kill -9 / OOM / deployi)
+ *  - release smaže jen vlastní zámek (kontrola tokenu)
+ *  - výpadek backendu = MutexException, nikdy „asi mám zámek“
+ */</span>
+<span class="k">interface</span> MutexInterface
+{
+    <span class="c">/** @return Lock|null  null = zámek drží někdo jiný
+     *  @throws MutexException */</span>
+    <span class="k">public function</span> acquire(string $key, int $ttlSeconds): ?Lock;
+
+    <span class="c">/** Idempotentní; vypršelý nebo cizí zámek nechá být.
+     *  @throws MutexException */</span>
+    <span class="k">public function</span> release(Lock $lock): void;
+}
+
+<span class="k">final readonly class</span> Lock
+{
+    <span class="k">public function</span> __construct(<span class="k">public</span> string $key, <span class="k">public</span> string $token) {}
+}
+
+<span class="k">final class</span> MutexException <span class="k">extends</span> RuntimeException {}</code></pre>
+
+<h2 id="pouziti">Použití</h2>
+<pre><code>$factory = <span class="k">new</span> SchedulerFactory(<span class="k">new</span> RedisMutex($redis), $logger, $clock);   <span class="c">// PSR-3 logger, PSR-20 clock</span>
+$scheduler = $factory->create($config[<span class="c">'scheduler_driver'</span>]);                 <span class="c">// 'laravel'</span>
+
+$scheduler->add(<span class="k">new</span> ScheduledJob(<span class="c">'billing.sync-invoices'</span>, <span class="c">'*/15 * * * *'</span>, $syncInvoicesJob, lockTtlSeconds: 900));
+$scheduler->add(<span class="k">new</span> ScheduledJob(
+    <span class="c">'billing.monthly-report'</span>,
+    <span class="c">'0 6 1 * *'</span>,
+    $monthlyReportJob,
+    timezone: <span class="k">new</span> DateTimeZone(<span class="c">'Europe/Prague'</span>),
+));
+
+$scheduler->runDue();</code></pre>
+<p>Crontab: <code>* * * * * php /app/bin/scheduler-run</code>.</p>
+<div class="pager"><a href="index.html"><span>← Předchozí</span>Přehled</a><a class="next" href="implementace.html"><span>Další →</span>Implementace</a></div>
+</main>
+</body>
+</html>

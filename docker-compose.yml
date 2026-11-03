@@ -1,0 +1,15 @@
+name: scheduler-abstraction
+
+services:
+  app:
+    build: docker
+    working_dir: /app
+    volumes:
+      - ./:/app
+    environment:
+      REDIS_HOST: redis
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine

@@ -1,0 +1,42 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/*
+ * Example entry point for system cron:  * * * * * php /app/bin/scheduler-run
+ * In the application, build the scheduler in your DI container instead and keep this script thin.
+ */
+
+use App\Examples\SyncInvoicesJob;
+use App\Mutex\RedisMutex;
+use App\Scheduler\ScheduledJob;
+use App\Scheduler\SchedulerFactory;
+use Psr\Clock\ClockInterface;
+use Psr\Log\AbstractLogger;
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+$logger = new class extends AbstractLogger {
+    public function log($level, string|Stringable $message, array $context = []): void
+    {
+        fwrite(STDERR, sprintf("[%s] %s %s\n", (string) $level, $message, json_encode($context)));
+    }
+};
+$clock = new class implements ClockInterface {
+    public function now(): DateTimeImmutable
+    {
+        return new DateTimeImmutable();
+    }
+};
+
+$redis = new Redis();
+$redis->connect(getenv('REDIS_HOST') ?: '127.0.0.1');
+
+$factory = new SchedulerFactory(new RedisMutex($redis), $logger, $clock);
+$scheduler = $factory->create(getenv('SCHEDULER_DRIVER') ?: SchedulerFactory::DRIVER_LARAVEL);
+
+$scheduler->add(new ScheduledJob('billing.sync-invoices', '*/15 * * * *', new SyncInvoicesJob($logger), lockTtlSeconds: 900));
+$scheduler->add(new ScheduledJob('heartbeat', '* * * * *', new SyncInvoicesJob($logger), withoutOverlapping: false));
+
+$scheduler->runDue();

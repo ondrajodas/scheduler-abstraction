@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>Implementace · Scheduler &amp; Mutex</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root { padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); color-scheme: light; }
+*, *::before, *::after { box-sizing: border-box; }
+body { margin: 0; -webkit-text-size-adjust: 100%; }
+[hidden] { display: none !important; }
+
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --fg: #1b2230; --muted: #5a6476; --line: #dde1e8;
+  --accent: #1f5fa8; --accent-soft: #e6eef8; --code-bg: #eef1f5; --ok: #1d7a4a; --warn: #a35b00;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161d; --surface: #1a2029; --fg: #e3e7ee; --muted: #9aa4b5; --line: #2c3442;
+    --accent: #6fa8ec; --accent-soft: #1d2a3b; --code-bg: #1f2632; --ok: #5cc28d; --warn: #e3a04f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a2029; --fg: #e3e7ee; --muted: #9aa4b5; --line: #2c3442;
+  --accent: #6fa8ec; --accent-soft: #1d2a3b; --code-bg: #1f2632; --ok: #5cc28d; --warn: #e3a04f;
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.6; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.wrap { max-width: 880px; margin: 0 auto; padding-block: 32px 80px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 8px; }
+header { display: flex; flex-direction: column; gap: 10px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; line-height: 1.2; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 42px); }
+h2 { font-size: 26px; margin-top: 36px; padding-top: 16px; border-top: 1px solid var(--line); }
+header + h2 { border-top: 0; margin-top: 16px; padding-top: 0; }
+h3 { font-size: 19px; margin-top: 22px; }
+p, ul, ol { margin: 8px 0; max-width: 72ch; }
+li { margin: 4px 0; }
+.lead { font-size: 18px; color: var(--muted); margin: 0; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+code { font-family: var(--font-mono); font-size: .88em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; }
+pre { font-family: var(--font-mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: 6px; padding: 14px 16px; overflow-x: auto; margin: 10px 0; }
+pre code { background: none; padding: 0; font-size: inherit; }
+pre.mermaid { background: var(--surface); text-align: center; }
+.c { color: var(--muted); }
+.k { color: var(--accent); font-weight: 600; }
+.scroll { overflow-x: auto; margin: 10px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+th { font-family: var(--font-mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; background: var(--code-bg); }
+th code { font-size: 1em; }
+tr:last-child td { border-bottom: 0; }
+td code { white-space: nowrap; }
+.callout { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 12px 0; max-width: 72ch; }
+.pill { display: inline-block; font-family: var(--font-mono); font-size: 11px; padding: 1px 7px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.ok { color: var(--ok); } .pill.warn { color: var(--warn); }
+.topnav { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg); border-bottom: 1px solid var(--line); }
+.topnav-inner { max-width: 880px; margin: 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; padding-block: 10px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.brand { font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--fg); text-decoration: none; margin-right: auto; }
+.topnav a.tab { font-size: 14px; color: var(--muted); text-decoration: none; padding: 4px 0; border-bottom: 2px solid transparent; }
+.topnav a.tab:hover { color: var(--fg); }
+.topnav a.tab[aria-current="page"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.onpage { font-size: 14px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.onpage a { color: var(--muted); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin: 4px 0 0; }
+.cards a { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--surface); text-decoration: none; color: var(--fg); min-width: 0; }
+.cards a:hover { border-color: var(--accent); }
+.cards strong { font-family: var(--font-display); font-size: 18px; color: var(--accent); }
+.cards span { font-size: 14px; color: var(--muted); }
+.pager { display: flex; justify-content: space-between; gap: 12px; margin-top: 40px; padding-top: 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.pager a { display: flex; flex-direction: column; text-decoration: none; padding: 10px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); min-width: 0; }
+.pager a span { font-size: 12px; color: var(--muted); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: .06em; }
+.pager a.next { margin-left: auto; text-align: right; }
+</style>
+</head>
+<body>
+<nav class="topnav" aria-label="Stránky návrhu"><div class="topnav-inner"><a class="brand" href="index.html">Scheduler &amp; Mutex</a><a class="tab" href="index.html">Přehled</a><a class="tab" href="rozhrani.html">Rozhraní</a><a class="tab" href="implementace.html" aria-current="page">Implementace</a><a class="tab" href="provoz.html">Provoz</a></div></nav>
+<main class="wrap">
+<header><span class="eyebrow">Scheduler &amp; Mutex · Implementace</span><h1>Implementace</h1><p class="lead">Factory, zamykání nad libovolným schedulerem, Laravel adaptér bez Laravel aplikace a RedisMutex.</p><div class="onpage"><span>Na stránce:</span><a href="#factory">SchedulerFactory</a><a href="#locking">LockingScheduler a LockedJob</a><a href="#laravel">LaravelScheduler</a><a href="#redis">RedisMutex</a><a href="#laravel-mutex">Proč ne Laravel mutex</a></div></header>
+<h2 id="factory">SchedulerFactory</h2>
+<pre><code><span class="k">final readonly class</span> SchedulerFactory
+{
+    <span class="k">public const</span> DRIVER_LARAVEL = <span class="c">'laravel'</span>;
+
+    <span class="k">public function</span> __construct(
+        <span class="k">private</span> MutexInterface $mutex,
+        <span class="k">private</span> LoggerInterface $logger,
+        <span class="k">private</span> ClockInterface $clock,
+    ) {}
+
+    <span class="k">public function</span> create(string $driver): SchedulerInterface
+    {
+        $scheduler = <span class="k">match</span> ($driver) {
+            self::DRIVER_LARAVEL => <span class="k">new</span> LaravelScheduler($this->clock, $this->logger),
+            <span class="k">default</span> => <span class="k">throw new</span> InvalidArgumentException(sprintf(<span class="c">'Unknown scheduler driver "%s".'</span>, $driver)),
+        };
+
+        <span class="k">return new</span> LockingScheduler($scheduler, $this->mutex, $this->logger);
+    }
+}</code></pre>
+<p>Nový scheduler = jedna nová větev v <code>match</code>. Kód aplikace se nemění.</p>
+
+<h2 id="locking">LockingScheduler a LockedJob</h2>
+<pre><code><span class="k">final readonly class</span> LockingScheduler <span class="k">implements</span> SchedulerInterface
+{
+    <span class="k">public function</span> add(ScheduledJob $job): void
+    {
+        $this->scheduler->add($job->withoutOverlapping ? $job->withJob($this->lock($job)) : $job);
+    }
+    <span class="c">// runDue() jen deleguje; zámek má klíč "scheduler:{name}"</span>
+}
+
+<span class="k">final readonly class</span> LockedJob <span class="k">implements</span> JobInterface
+{
+    <span class="k">public function</span> run(): void
+    {
+        $lock = $this->mutex->acquire($this->lockKey, $this->lockTtlSeconds);
+        <span class="k">if</span> ($lock === <span class="k">null</span>) {
+            $this->logger->info(<span class="c">'Scheduled job skipped, previous run still holds the lock'</span>, …);
+            <span class="k">return</span>;
+        }
+        <span class="k">try</span> {
+            $this->job->run();
+        } <span class="k">finally</span> {
+            $this->mutex->release($lock);
+        }
+    }
+}</code></pre>
+
+<h2 id="laravel">LaravelScheduler</h2>
+<p>Joby spouští přes eventy Laravel Scheduleru, ale bez Laravel aplikace. Každý job je <code>CallbackEvent</code>. <code>runDue()</code> nejdřív vybere eventy na řadě a pak je spustí, stejně jako <code>artisan schedule:run</code>. Co jsme ve zdrojácích Laravelu 12 ověřili:</p>
+<div class="scroll"><table>
+  <thead><tr><th>Laravel API</th><th>U nás</th><th>Proč</th></tr></thead>
+  <tbody>
+    <tr><td><code>CallbackEvent</code>: <code>cron()</code>, <code>isDue()</code>, <code>filtersPass()</code>, <code>run()</code></td><td><span class="pill ok">používá se</span></td><td>Callback spouští přes <code>$container->call()</code>, stačí <code>illuminate/container</code></td></tr>
+    <tr><td><code>$app</code> pro <code>isDue()</code></td><td><span class="pill ok">LaravelRuntime</span></td><td>Potřebuje jen <code>isDownForMaintenance()</code> a <code>environment()</code></td></tr>
+    <tr><td><code>withoutOverlapping()</code>, <code>onOneServer()</code></td><td><span class="pill warn">záměrně ne</span></td><td>Zamykání je v <code>LockingScheduler</code>, společné pro všechny implementace</td></tr>
+    <tr><td><code>->command()</code>, <code>->exec()</code>, <code>runInBackground()</code></td><td><span class="pill warn">nejde</span></td><td>Volají <code>base_path()</code> a <code>artisan schedule:finish</code></td></tr>
+    <tr><td><code>artisan schedule:run</code></td><td><span class="pill warn">nejde</span></td><td>Je to příkaz Laravel konzole. Jeho smyčku (výběr a spuštění) dělá <code>runDue()</code></td></tr>
+  </tbody>
+</table></div>
+<pre><code><span class="k">final class</span> LaravelScheduler <span class="k">implements</span> SchedulerInterface
+{
+    <span class="k">public function</span> __construct(
+        <span class="k">private readonly</span> LoggerInterface $logger,
+        <span class="k">private readonly</span> LaravelRuntime $runtime = <span class="k">new</span> LaravelRuntime(),
+    ) {}
+
+    <span class="k">public function</span> add(ScheduledJob $job): void
+    {
+        <span class="c">// cron-expression přijímá jen název timezone, ne DateTimeZone</span>
+        $event = <span class="k">new</span> CallbackEvent(<span class="k">new</span> DisabledEventMutex(), [$job->job, <span class="c">'run'</span>], [], $job->timezone?->getName());
+        $event->cron($job->cron)->name($job->name)->nextRunDate();
+        <span class="c">// nevalidní i nemožný výraz (0 0 30 2 *) → InvalidArgumentException</span>
+    }
+
+    <span class="k">public function</span> runDue(): void
+    {
+        <span class="c">// nejdřív výběr, pak běh: dlouhý job neposune vyhodnocení dalších jobů do jiné minuty</span>
+        <span class="k">foreach</span> ($this->dueEvents() <span class="k">as</span> $name => $event) {
+            $this->runEvent($name, $event);     <span class="c">// $event->run($this->runtime), výjimku zaloguje</span>
+        }
+    }
+
+    <span class="k">private function</span> dueEvents(): array
+    {
+        <span class="k">return</span> array_filter($this->events,
+            fn (CallbackEvent $event) => $event->isDue($this->runtime) && $event->filtersPass($this->runtime));
+    }
+}
+
+<span class="c">/** Náhrada Laravel aplikace pro $app: kontejner + kontroly z Event::isDue() */</span>
+<span class="k">final class</span> LaravelRuntime <span class="k">extends</span> Illuminate\Container\Container
+{
+    <span class="k">public function</span> isDownForMaintenance(): bool { <span class="k">return false</span>; }
+    <span class="k">public function</span> environment(): string;
+}</code></pre>
+<p><code>DisabledEventMutex implements EventMutex</code> splní požadavek konstruktoru <code>CallbackEvent</code>. Laravel mutex se volá jen při <code>withoutOverlapping()</code>, které nezapínáme, takže je to jen pojistka: kdyby se ho něco pokusilo použít, vyhodí <code>LogicException</code>. Test <code>testNeverUsesLaravelMutex</code> to ověřuje.</p>
+<div class="callout"><strong>Proč nepoužíváme zamykání Laravelu přes vlastní bridge?</strong> Šlo by to přes rozhraní <code>EventMutex</code> a <code>SchedulingMutex</code>. Zamykání by se tím ale přesunulo do adaptéru a crunz by potřeboval jiný bridge (symfony/lock). Stejný <code>ScheduledJob</code> by se pak mohl chovat jinak podle zvolené knihovny. Společný <code>LockingScheduler</code> drží chování stejné.</div>
+<p>Čas bere Laravel z Carbonu (<code>Date::now()</code>). Testy ho nastavují přes <code>Carbon::setTestNow()</code>. <code>SchedulerFactory</code> si přesto drží <code>ClockInterface</code> pro implementace, které vyhodnocují cron pro zadaný čas (crunz).</p>
+
+<h2 id="redis">RedisMutex</h2>
+<ul>
+  <li><strong>acquire:</strong> <code>SET mutex:{key} {token} NX PX {ttl}</code>, kde token je <code>bin2hex(random_bytes(16))</code></li>
+  <li><strong>release:</strong> Lua skript <code>if GET == token then DEL</code>, takže nikdy nesmaže cizí zámek</li>
+  <li><strong>chyby:</strong> <code>RedisException</code> se převede na <code>MutexException</code> a job se nespustí</li>
+</ul>
+
+<h2 id="laravel-mutex">Proč ne Laravel mutex</h2>
+<p>Laravel 12 <code>CacheEventMutex</code> (<code>withoutOverlapping()</code>) u cache úložišť s podporou zámků (Redis, databáze) vytvoří skutečný zámek s náhodným vlastníkem. Jinde použije <code>Cache::add()</code>. Problém je v uvolnění: <code>forget()</code> si vytvoří nový lock objekt a zavolá <code>forceRelease()</code>, takže <strong>vlastníka nikdy nekontroluje</strong>.</p>
+<div class="scroll"><table>
+  <thead><tr><th>Laravel <code>CacheEventMutex</code></th><th>Dopad</th><th><code>RedisMutex</code></th></tr></thead>
+  <tbody>
+    <tr><td><code>forget()</code> = <code>forceRelease()</code>, smaže jakýkoli zámek</td><td>Job běží déle než TTL, zámek převezme další běh a první běh ho po doběhnutí smaže. Třetí běh se pak překryje s druhým</td><td>Token + compare-and-delete (Lua)</td></tr>
+    <tr><td>Výchozí TTL 1440 min (24 h)</td><td>Po <code>kill -9</code>, OOM nebo deployi je job až den zablokovaný</td><td>TTL per job (<code>lockTtlSeconds</code>), výchozí 1 h</td></tr>
+    <tr><td>U <code>runInBackground()</code> uvolňuje jiný proces (<code>schedule:finish</code>)</td><td>Když neproběhne, zámek zůstane do vypršení TTL</td><td>Zámek bere i uvolňuje stejný proces ve <code>finally</code></td></tr>
+    <tr><td>Chování závisí na cache driveru</td><td>Stejný kód se chová jinak podle konfigurace cache</td><td>Jedno úložiště, atomický <code>SET NX PX</code></td></tr>
+  </tbody>
+</table></div>
+<p>Výpadek Redisu Laravel nezamlčí, výjimka projde dál. <code>RedisMutex</code> se chová stejně: vyhodí <code>MutexException</code> a job se nespustí.</p>
+<div class="pager"><a href="rozhrani.html"><span>← Předchozí</span>Rozhraní</a><a class="next" href="provoz.html"><span>Další →</span>Provoz</a></div>
+</main>
+</body>
+</html>
