@@ -14,6 +14,11 @@ final readonly class RedisMutex implements MutexInterface
         return 0
         LUA;
 
+    private const EXTEND_SCRIPT = <<<'LUA'
+        if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) end
+        return 0
+        LUA;
+
     public function __construct(
         private Redis $redis,
         private string $prefix = 'mutex:',
@@ -31,6 +36,13 @@ final readonly class RedisMutex implements MutexInterface
     public function release(Lock $lock): void
     {
         $this->call(fn () => $this->redis->eval(self::RELEASE_SCRIPT, [$this->prefix . $lock->key, $lock->token], 1));
+    }
+
+    public function extend(Lock $lock, int $ttlSeconds): bool
+    {
+        $arguments = [$this->prefix . $lock->key, $lock->token, $ttlSeconds * 1000];
+
+        return $this->call(fn () => $this->redis->eval(self::EXTEND_SCRIPT, $arguments, 1)) === 1;
     }
 
     /**
