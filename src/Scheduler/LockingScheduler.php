@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Scheduler;
 
 use App\Mutex\MutexInterface;
+use Psr\Clock\ClockInterface;
 use Psr\Log\LoggerInterface;
 
 /**
@@ -19,6 +20,7 @@ final readonly class LockingScheduler implements SchedulerInterface
         private SchedulerInterface $scheduler,
         private MutexInterface $mutex,
         private LoggerInterface $logger,
+        private ClockInterface $clock,
     ) {
     }
 
@@ -34,6 +36,8 @@ final readonly class LockingScheduler implements SchedulerInterface
 
     private function lock(ScheduledJob $job): LockedJob
     {
-        return new LockedJob($job->job, $this->mutex, self::LOCK_PREFIX . $job->name, $job->lockTtlSeconds, $this->logger);
+        $key = self::LOCK_PREFIX . $job->name;
+
+        return new LockedJob($job->job, $this->mutex, $key, $job->lockTtlSeconds, $this->logger, $this->clock);
     }
 }
