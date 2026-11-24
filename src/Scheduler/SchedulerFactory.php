@@ -21,8 +21,7 @@ final readonly class SchedulerFactory
     public function __construct(
         private MutexInterface $mutex,
         private LoggerInterface $logger,
-        // Laravel reads time from Carbon itself; kept for implementations evaluating at an explicit time (crunz).
-        // @phpstan-ignore property.onlyWritten
+        // Drives lock heartbeats; also for implementations evaluating cron at an explicit time (crunz).
         private ClockInterface $clock,
     ) {
     }
@@ -34,6 +33,6 @@ final readonly class SchedulerFactory
             default => throw new InvalidArgumentException(sprintf('Unknown scheduler driver "%s".', $driver)),
         };
 
-        return new LockingScheduler($scheduler, $this->mutex, $this->logger);
+        return new LockingScheduler($scheduler, $this->mutex, $this->logger, $this->clock);
     }
 }

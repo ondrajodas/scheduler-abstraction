@@ -15,7 +15,12 @@ interface SchedulerInterface
 
 interface JobInterface
 {
-    public function run(): void;
+    public function run(LockHeartbeat $heartbeat): void;   // dlouhé joby volají $heartbeat->beat()
+}
+
+interface LockHeartbeat
+{
+    public function beat(): void;                   // LockLostException = zámek ztracen, job musí skončit
 }
 
 final readonly class ScheduledJob
@@ -34,6 +39,7 @@ interface MutexInterface
 {
     public function acquire(string $key, int $ttlSeconds): ?Lock;   // null = zámek drží někdo jiný
     public function release(Lock $lock): void;                      // uvolní jen vlastní zámek
+    public function extend(Lock $lock, int $ttlSeconds): bool;      // false = zámek už nevlastníme
 }
 ```
 
@@ -66,11 +72,31 @@ Systémový cron spouští vstupní skript každou minutu:
 
 - **`SchedulerFactory`** vytvoří implementaci podle jména driveru a vždy ji obalí do `LockingScheduler`.
 - **`LockingScheduler`** obalí každý job s `withoutOverlapping: true` do `LockedJob`. Dokud předchozí běh drží zámek `scheduler:<name>`, job se přeskočí. Zámek se uvolňuje ve `finally`, takže se uvolní i tehdy, když job vyhodí výjimku. Implementace scheduleru samy nic nezamykají.
+- **`MutexHeartbeat`** dostane od `LockedJob` každý zamčený job jako parametr `run()`. Job bez zámku (`withoutOverlapping: false`) dostane `NullHeartbeat`, který nedělá nic. Viz [Dlouhé joby](#dlouhé-joby).
 - **`LaravelScheduler`** spouští joby přes eventy Laravel Scheduleru, ale bez Laravel aplikace. Každý job je `CallbackEvent`. `runDue()` nejdřív vybere eventy na řadě (`isDue()` + `filtersPass()`) a pak je jeden po druhém spustí přes `$event->run()`, stejně jako `artisan schedule:run`. Díky výběru předem nemůže dlouhý job způsobit, že joby po něm přijdou o svou minutu. Selhání jobu se zaloguje a ostatní joby na řadě poběží dál.
   - `LaravelRuntime` zastupuje Laravel aplikaci, kterou eventy očekávají jako `$app`: kontejner pro volání callbacků plus `isDownForMaintenance()` a `environment()`.
   - Příkazové eventy (`->command()`, `->exec()`) a `runInBackground()` se nepoužívají, protože potřebují `base_path()` a `artisan`.
   - Laravel `withoutOverlapping()` ani `onOneServer()` se nikdy nezapínají, takže se Laravel mutex nad cache nikdy nezavolá. Nahrazuje ho `DisabledEventMutex`, který vyhodí výjimku, kdyby se ho něco pokusilo použít. Zamykání zůstává v `LockingScheduler`, a proto se chová stejně pro každou implementaci.
   - Aktuální čas bere Laravel z Carbonu (`Date::now()`). V testech se nastavuje přes `Carbon::setTestNow()`.
+
+## Dlouhé joby
+
+Job, který může běžet déle než `lockTtlSeconds`, musí průběžně volat `$heartbeat->beat()`, typicky po každé dávce nebo stránce:
+
+```php
+public function run(LockHeartbeat $heartbeat): void
+{
+    foreach ($this->pages() as $page) {
+        $this->process($page);
+        $heartbeat->beat();
+    }
+}
+```
+
+- `beat()` je levné volat často. Redis kontaktuje, až když od posledního prodloužení uběhla třetina TTL. Pak zámek prodlouží znovu na celé TTL atomickým Lua skriptem (`pexpire` jen při shodě tokenu).
+- Když zámek mezitím vypršel nebo ho převzal jiný běh, `extend()` vrátí `false` a `beat()` vyhodí `LockLostException`. Job se tím ukončí jako selhaný (zaloguje se) a nepokračuje souběžně s novým během. Vypršelý zámek se nikdy znovu nevytvoří.
+- Mezi dvěma voláními `beat()` nesmí uběhnout víc než `lockTtlSeconds`. Jedno blokující volání delší než TTL (např. dlouhý SQL dotaz) heartbeat nepokryje, takže pro něj TTL nastavit s rezervou.
+- Prodlužuje se jen tehdy, když job opravdu dělá pokrok. Zaseknutý job zámek nedrží, ten po TTL vyprší.
 
 ## Proč vlastní mutex
 
@@ -101,6 +127,7 @@ Výpadek Redisu Laravel nezamlčí, výjimka projde dál. `RedisMutex` se chová
 | **Laravel adaptér používá Laravel runner** (`CallbackEvent`), ne `artisan schedule:run` | Laravel jen jako parser cronu, nebo minimální Laravel aplikace | Používá Laravel Scheduler, aniž by aplikace běžela na Laravelu |
 | **Crontab výraz jako string** | Fluent API (`->dailyAt()`) | Umí ho každá knihovna, rozhraní nezávisí na API konkrétní knihovny |
 | **`withoutOverlapping` ve výchozím stavu zapnuté** | Výchozí vypnuté jako v Laravelu | Souběh musí být vědomá volba |
+| **Prodloužení zámku přes heartbeat volaný jobem** | Automaticky přes `pcntl`/`SIGALRM` | Deterministické, bez další extension, prodlužuje se jen při skutečném pokroku. Signal handler se navíc během blokujícího volání stejně nespustí |
 | **Vlastní `MutexInterface` nad Redisem** | `symfony/lock`, databázová tabulka | Zadání chce vlastní mutex; Redis má atomický `SET NX PX` |
 | **Factory s `match` podle jména driveru** | Registr driverů, DI tagy | Nejjednodušší řešení; nový driver = jedna větev |
 
@@ -110,13 +137,13 @@ Výpadek Redisu Laravel nezamlčí, výjimka projde dál. `RedisMutex` se chová
 |---|---|---|---|
 | Joby běží za sebou v jednom procesu | Dlouhý job zdrží další joby v téže minutě | Dlouhou práci posílat do fronty; paralelní běh uvnitř adaptéru | ne |
 | Chybí deduplikace napříč instancemi (`onOneServer`) | Na dvou instancích se krátký job v jedné minutě spustí dvakrát | Nepovinný parametr `ScheduledJob` + zámek na klíč `{name}:{YmdHi}` | ne (nový parametr s výchozí hodnotou) |
-| Zámek nejde prodloužit | Job delší než `lockTtlSeconds` se překryje s dalším během | `MutexInterface::extend()` volané z jobu | **ano**, nová metoda rozbije existující implementace, rozhodnout dřív, než jich bude víc |
+| Zámek se prodlužuje jen z jobu (`beat()`), ne automaticky | Job, který nevolá `beat()`, nebo blokující volání delší než TTL, se překryje s dalším během | Automatický tick přes `pcntl` + `SIGALRM` | ne |
 | Zmeškaná minuta se nedohání | Zpožděný start cronu přes hranici minuty = job v té minutě neproběhne | Ukládat čas posledního běhu a dohnat | ne |
 
 ## Poznámky k nasazení
 
 - Scheduler spouštět na **jedné instanci**. Mutex brání překryvu běhů napříč servery, ale krátký job by se na dvou instancích scheduleru mohl v jedné minutě spustit dvakrát.
-- Joby běží za sebou v jednom procesu, takže dlouhý job zdrží další joby na řadě v téže minutě. Dlouhou práci přesunout do fronty, nebo nastavit `lockTtlSeconds` nad maximální dobu běhu jobu.
+- Joby běží za sebou v jednom procesu, takže dlouhý job zdrží další joby na řadě v téže minutě. Dlouhou práci přesunout do fronty. Pokud job může běžet déle než `lockTtlSeconds`, musí volat `$heartbeat->beat()`.
 - Vyžaduje `ext-redis`. Použít Redis instanci nebo databázi bez eviction politiky `allkeys-lru`, jinak může Redis zámky tiše vyhodit.
 
 ## Vývoj

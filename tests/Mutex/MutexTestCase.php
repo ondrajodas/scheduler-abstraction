@@ -91,4 +91,50 @@ abstract class MutexTestCase extends TestCase
 
         self::assertNotNull($mutex->acquire('job', 60));
     }
+
+    public function testExtendKeepsLockBeyondOriginalTtl(): void
+    {
+        $mutex = $this->createMutex();
+        $lock = $mutex->acquire('job', 1);
+        self::assertNotNull($lock);
+
+        self::assertTrue($mutex->extend($lock, 60));
+        $this->expire(1);
+
+        self::assertNull($mutex->acquire('job', 60));
+    }
+
+    public function testExtendWithForeignTokenFailsAndKeepsLock(): void
+    {
+        $mutex = $this->createMutex();
+        $mutex->acquire('job', 60);
+
+        self::assertFalse($mutex->extend(new Lock('job', 'someone-elses-token'), 60));
+        self::assertNull($mutex->acquire('job', 60));
+    }
+
+    public function testExtendDoesNotRecreateExpiredLock(): void
+    {
+        $mutex = $this->createMutex();
+        $lock = $mutex->acquire('job', 1);
+        self::assertNotNull($lock);
+        $this->expire(1);
+
+        self::assertFalse($mutex->extend($lock, 60));
+        self::assertNotNull($mutex->acquire('job', 60));
+    }
+
+    public function testExpiredOwnerCannotExtendNewOwnersLock(): void
+    {
+        $mutex = $this->createMutex();
+        $staleLock = $mutex->acquire('job', 1);
+        self::assertNotNull($staleLock);
+        $this->expire(1);
+        $newLock = $mutex->acquire('job', 60);
+        self::assertNotNull($newLock);
+
+        self::assertFalse($mutex->extend($staleLock, 60));
+        $mutex->release($newLock);
+        self::assertNotNull($mutex->acquire('job', 60));
+    }
 }

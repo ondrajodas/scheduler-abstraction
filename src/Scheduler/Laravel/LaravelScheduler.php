@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Scheduler\Laravel;
 
+use App\Scheduler\NullHeartbeat;
 use App\Scheduler\ScheduledJob;
 use App\Scheduler\SchedulerInterface;
 use Illuminate\Console\Scheduling\CallbackEvent;
@@ -61,8 +62,10 @@ final class LaravelScheduler implements SchedulerInterface
 
     private function createEvent(ScheduledJob $job): CallbackEvent
     {
+        // Locked jobs replace the heartbeat with their own (LockedJob); unlocked runs have nothing to extend.
+        $callback = static fn () => $job->job->run(new NullHeartbeat());
         // cron-expression accepts only a timezone name, not a DateTimeZone instance
-        $event = new CallbackEvent(new DisabledEventMutex(), [$job->job, 'run'], [], $job->timezone?->getName());
+        $event = new CallbackEvent(new DisabledEventMutex(), $callback, [], $job->timezone?->getName());
         try {
             $event->cron($job->cron)->name($job->name)->nextRunDate();
         } catch (InvalidArgumentException | RuntimeException) {
